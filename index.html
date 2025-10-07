@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Генератор QR-кодов</title>
+  <style>
+    :root{--ink:#111;--muted:#e9eef3}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;margin:0;background:#f6f8fa;color:#111}
+    .wrap{max-width:980px;margin:0 auto;padding:24px}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    h1{font-size:22px;margin:0 0 12px}
+    .grid{display:grid;grid-template-columns:1fr 380px;gap:16px}
+    .field{margin:10px 0}
+    .label{font-size:12px;color:#555}
+    input[type="text"], input[type="number"], select{
+      width:100%;box-sizing:border-box;margin-top:6px;
+      padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;background:#fff
+    }
+    input[type="color"]{width:100%;height:40px;border-radius:10px;border:1px solid #d1d5db;margin-top:6px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+    button{
+      cursor:pointer;border:1px solid #111;background:#111;color:#fff;border-radius:10px;
+      padding:10px 14px;font-size:14px
+    }
+    button.ghost{background:#fff;color:#111;border-color:#d1d5db}
+    .preview{display:flex;align-items:center;justify-content:center;background:#fff;border:1px dashed #cbd5e1;border-radius:16px;min-height:360px}
+    .hint{font-size:12px;color:#6b7280;margin-top:6px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .footer{font-size:12px;color:#6b7280;margin-top:16px}
+    .error{color:#b91c1c;font-size:12px;margin-top:6px}
+    .warn{color:#92400e;font-size:12px;margin-top:6px}
+    .invalid{border-color:#ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.15)}
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="grid">
+      <!-- Левая колонка: форма -->
+      <div class="card">
+        <h1>Генератор QR-кодов</h1>
+
+        <div class="field">
+          <div class="label">Текст или ссылка</div>
+          <input id="text" type="text" placeholder="https://пример.сайт или любой текст" value="https://example.com" />
+          <div id="text-error" class="error" style="display:none"></div>
+          <div id="text-warn" class="warn" style="display:none"></div>
+          <div class="hint">Можно вставить любой текст или URL.</div>
+        </div>
+        <div class="field">
+          <div class="label">Тип содержимого</div>
+          <select id="mode">
+            <option value="auto">Авто (определять автоматически)</option>
+            <option value="url">URL</option>
+            <option value="text">Текст</option>
+          </select>
+        </div>        
+        <div class="row">
+          <div class="field">
+            <div class="label">Цвет кода</div>
+            <input id="color" type="color" value="#000000" />
+          </div>
+          <div class="field">
+            <div class="label">Размер (px)</div>
+            <input id="size" type="number" value="300" min="128" max="1024" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <div class="label">Формат скачивания</div>
+            <select id="format">
+              <option value="png">PNG</option>
+              <option value="svg">SVG</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="label">Логотип в центре (PNG или JPG)</div>
+            <input id="logo" type="file" accept="image/*" />
+            <button id="logo-clear" class="ghost" style="margin-top:8px" disabled>Удалить логотип</button>
+            <div class="hint">Рекомендуется квадратное изображение без фона, до 500×500px</div>
+          </div>
+          <div class="field">
+            <div class="label">Фон</div>
+            <select id="bg">
+              <option value="transparent">Прозрачный</option>
+              <option value="#ffffff">Белый</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="btn-generate">Обновить превью</button>
+          <button id="btn-download" class="ghost">Скачать</button>
+        </div>
+
+        <div class="footer">Подсказка: меняй параметры и жми «Обновить превью». Затем — «Скачать».</div>
+      </div>
+
+      <!-- Правая колонка: превью -->
+      <div class="card">
+        <div class="label" style="margin-bottom:8px">Превью</div>
+        <div id="preview" class="preview"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+        <h2 class="text-xl" style="font-size:18px;margin:0 0 12px">История генераций</h2>
+        <div id="history" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+        <div class="actions" style="margin-top:12px">
+          <button id="history-clear" class="ghost">Очистить историю</button>
+        </div>
+      </div>
+  </div>
+
+  <!-- Библиотека генерации QR с поддержкой PNG и SVG -->
+  <script src="https://cdn.jsdelivr.net/npm/qr-code-styling/lib/qr-code-styling.js"></script>
+  <script>
+    const API_URL = "http://localhost:5174";
+  
+    // ===== селекторы
+    const $ = s => document.querySelector(s);
+    const textEl   = $("#text");
+    const colorEl  = $("#color");
+    const sizeEl   = $("#size");
+    const formatEl = $("#format");
+    const bgEl     = $("#bg");
+    const modeEl   = $("#mode");
+    const errEl    = $("#text-error");
+    const warnEl   = $("#text-warn");
+  
+    const logoEl   = $("#logo");
+    const logoClearBtn = $("#logo-clear");
+    const previewEl= $("#preview");
+    const btnGen   = $("#btn-generate");
+    const btnDown  = $("#btn-download");
+    const historyEl= $("#history");
+    const historyClearBtn = $("#history-clear");
+  
+    // ===== состояние
+    let qr = null;
+    let logoDataUrl = null;
+  
+    // ===== история (локально)
+    const HISTORY_KEY = "qr_history_v1";
+    const HISTORY_LIMIT = 20;
+    const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+  
+    // ===== ВАЛИДАЦИЯ / НОРМАЛИЗАЦИЯ
+    const MAX_RECOMMENDED_LEN = 1500; // рекомендуемое ограничение (не жёсткое)
+    const URL_PROTO_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+    const SPACE_RE = /\s/;
+  
+    function setError(msg){ errEl.style.display = msg ? "block":"none"; errEl.textContent = msg || ""; textEl.classList.toggle("invalid", !!msg); }
+    function setWarn(msg){ warnEl.style.display = msg ? "block":"none"; warnEl.textContent = msg || ""; }
+  
+    function looksLikeUrlCandidate(v){
+      // эвристика: есть протокол ИЛИ есть точка и нет пробелов
+      return URL_PROTO_RE.test(v) || (!SPACE_RE.test(v) && v.includes("."));
+    }
+  
+    function normalizeUrl(value){
+      // пробуем распарсить как есть
+      try {
+        if (!URL_PROTO_RE.test(value)) {
+          // нет протокола — добавим https://
+          const u = new URL("https://" + value);
+          return u.href;
+        }
+        const u = new URL(value);
+        return u.href;
+      } catch {
+        return null;
+      }
+    }
+  
+    function validateTextOrUrl(raw, mode){
+      const value = (raw || "").trim();
+      if (!value) return { ok:false, error:"Введите текст или ссылку" };
+  
+      if (value.length > MAX_RECOMMENDED_LEN) {
+        // не блокируем, но предупреждаем
+        setWarn(`Длина ${value.length} символов — QR может получиться слишком плотным. Рекомендуется ≤ ${MAX_RECOMMENDED_LEN}.`);
+      } else {
+        setWarn("");
+      }
+  
+      let finalMode = mode;
+      if (mode === "auto") {
+        finalMode = looksLikeUrlCandidate(value) ? "url" : "text";
+      }
+  
+      if (finalMode === "url") {
+        const normalized = normalizeUrl(value);
+        if (!normalized) return { ok:false, error:"Некорректный URL. Пример: https://example.com" };
+        return { ok:true, value: normalized, mode:"url" };
+      }
+  
+      // text
+      return { ok:true, value, mode:"text" };
+    }
+  
+    // ===== утилиты
+    const readAsDataURL = (file) => new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onload = e => resolve(e.target.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  
+    const blobToDataURL = (blob) => new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onload = e => resolve(e.target.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  
+    function loadHistory(){
+      try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
+      catch { return []; }
+    }
+    function saveHistoryList(list){
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_LIMIT)));
+    }
+    function fmtDate(iso){ try { return new Date(iso).toLocaleString(); } catch { return iso; } }
+  
+    // ===== генерация (локально для превью)
+    async function makeQRLocal(){
+      const mode = modeEl?.value || "auto";
+      const v = validateTextOrUrl(textEl.value, mode);
+      if (!v.ok) { setError(v.error); previewEl.innerHTML = '<div class="hint">Исправьте ввод, чтобы увидеть превью</div>'; qr=null; btnDown.disabled = true; return; }
+      setError(""); btnDown.disabled = false;
+  
+      const color = colorEl.value || "#000000";
+      const size  = clamp(parseInt(sizeEl.value || "300",10),128,1024);
+      const bg    = bgEl.value === "transparent" ? "transparent" : (bgEl.value || "transparent");
+      const format= (formatEl.value === "svg") ? "svg" : "png";
+  
+      previewEl.innerHTML = "";
+      qr = new QRCodeStyling({
+        width: size, height: size, type: format, data: v.value,
+        image: logoDataUrl || null,
+        dotsOptions: { color, type: "square" },
+        backgroundOptions: { color: bg },
+        qrOptions: { errorCorrectionLevel: "H" },
+        imageOptions: { crossOrigin: "anonymous", hideBackgroundDots: true, imageSize: 0.25, margin: 2 }
+      });
+      qr.append(previewEl);
+    }
+  
+    // Попытка генерации через API (возвращает dataUrl) — иначе null
+    async function tryGenerateViaAPI(){
+      const mode = modeEl?.value || "auto";
+      const v = validateTextOrUrl(textEl.value, mode);
+      if (!v.ok) { setError(v.error); return null; }
+      setError("");
+  
+      try {
+        const payload = {
+          text: v.value, // уже нормализован
+          color: colorEl.value || "#000000",
+          size: clamp(parseInt(sizeEl.value||"300",10),128,1024),
+          format: (formatEl.value === "svg") ? "svg" : "png",
+          bg: bgEl.value === "transparent" ? "transparent" : (bgEl.value || "transparent"),
+          logoDataUrl: logoDataUrl || null
+        };
+        const r = await fetch(API_URL + "/generate", {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) return null;
+        const { dataUrl } = await r.json();
+        return dataUrl || null;
+      } catch { return null; }
+    }
+  
+    async function getCurrentQRDataUrlLocal(){
+      if (!qr) await makeQRLocal();
+      const fmt = (formatEl.value === "svg") ? "svg" : "png";
+      const blob = await qr.getRawData(fmt);
+      return await blobToDataURL(blob);
+    }
+  
+    // ===== логотип
+    logoEl?.addEventListener("change", async ()=>{
+      const file = logoEl.files?.[0];
+      if (!file) { logoDataUrl = null; logoClearBtn && (logoClearBtn.disabled = true); makeQRLocal(); return; }
+      logoDataUrl = await readAsDataURL(file);
+      if (logoClearBtn) logoClearBtn.disabled = false;
+      makeQRLocal();
+    });
+    logoClearBtn?.addEventListener("click", (e)=>{
+      e.preventDefault();
+      logoDataUrl = null;
+      if (logoEl) logoEl.value = "";
+      if (logoClearBtn) logoClearBtn.disabled = true;
+      makeQRLocal();
+    });
+  
+    // ===== история (локально)
+    function renderHistory(){
+      if (!historyEl) return;
+      const list = loadHistory();
+      if (!list.length) {
+        historyEl.innerHTML = '<div class="hint">История пуста. Скачайте первый QR — он появится здесь.</div>';
+        return;
+      }
+      historyEl.innerHTML = list.map((item, idx) => {
+        const p = item.params;
+        return `
+          <div class="card" style="padding:12px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <img src="${item.dataURL}" alt="qr" style="width:56px;height:56px;border-radius:8px;border:1px solid #e5e7eb;object-fit:cover;background:#fff" />
+              <div style="min-width:0">
+                <div class="label" style="font-size:12px;color:#6b7280">${fmtDate(item.when)}</div>
+                <div style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${p.text}">${p.text}</div>
+              </div>
+            </div>
+            <div class="hint">
+              ${p.size}px • ${p.format.toUpperCase()} • цвет ${p.color}${p.logo ? " • с логотипом" : ""}
+            </div>
+            <div class="actions" style="margin-top:4px;display:flex;gap:8px">
+              <button data-act="repeat" data-idx="${idx}" class="ghost">Повторить</button>
+              <button data-act="download" data-idx="${idx}">Скачать</button>
+              <button data-act="delete" data-idx="${idx}" class="ghost">Удалить</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+  
+      historyEl.querySelectorAll("button[data-act]").forEach(btn=>{
+        btn.addEventListener("click", async ()=>{
+          const act = btn.getAttribute("data-act");
+          const idx = parseInt(btn.getAttribute("data-idx"),10);
+          const list = loadHistory();
+          const item = list[idx]; if (!item) return;
+  
+          if (act === "repeat") {
+            const p = item.params;
+            textEl.value = p.text; colorEl.value = p.color; sizeEl.value = p.size; formatEl.value = p.format;
+            bgEl.value = p.bg === "transparent" ? "transparent" : p.bg;
+            logoDataUrl = p.logo || null;
+            logoClearBtn && (logoClearBtn.disabled = !logoDataUrl);
+            logoEl && (logoEl.value = "");
+            await makeQRLocal();
+            previewEl.style.transition = "box-shadow .3s"; previewEl.style.boxShadow = "0 0 0 3px rgba(59,130,246,.4)";
+            setTimeout(()=>previewEl.style.boxShadow="none",600);
+          }
+          if (act === "download") {
+            const a = document.createElement("a");
+            a.href = item.dataURL;
+            const ext = (item.params?.format || "png").toLowerCase();
+            a.download = `qr-history.${ext}`;
+            a.click();
+          }
+          if (act === "delete") {
+            const newList = loadHistory(); newList.splice(idx,1); saveHistoryList(newList); renderHistory();
+          }
+        });
+      });
+    }
+    historyClearBtn?.addEventListener("click",(e)=>{e.preventDefault(); localStorage.removeItem(HISTORY_KEY); renderHistory();});
+  
+    // ===== события формы
+    textEl.addEventListener("input", ()=> makeQRLocal());
+    modeEl?.addEventListener("change", ()=> makeQRLocal());
+    colorEl.addEventListener("input", ()=> makeQRLocal());
+    sizeEl.addEventListener("input",  ()=> makeQRLocal());
+    bgEl.addEventListener("change",   ()=> makeQRLocal());
+    formatEl.addEventListener("change",()=> makeQRLocal());
+  
+    btnGen.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      await makeQRLocal();
+    });
+  
+    btnDown.addEventListener("click", async (e)=>{
+      e.preventDefault();
+  
+      // проверка перед скачиванием
+      const v = validateTextOrUrl(textEl.value, modeEl?.value || "auto");
+      if (!v.ok) { setError(v.error); return; }
+      setError("");
+  
+      // 1) пробуем сервер
+      const apiDataUrl = await tryGenerateViaAPI();
+      let finalDataUrl = apiDataUrl;
+  
+      // 2) если сервер недоступен — локально
+      if (!finalDataUrl) {
+        await makeQRLocal();
+        finalDataUrl = await getCurrentQRDataUrlLocal();
+      }
+  
+      // 3) скачать
+      const ext = (formatEl.value === "svg") ? "svg" : "png";
+      const a = document.createElement("a");
+      a.href = finalDataUrl;
+      a.download = `qr.${ext}`;
+      a.click();
+  
+      // 4) записать в локальную историю
+      const record = {
+        when: new Date().toISOString(),
+        dataURL: finalDataUrl,
+        params: {
+          text: v.value, // уже нормализован (если URL)
+          color: colorEl.value || "#000000",
+          size: clamp(parseInt(sizeEl.value||"300",10),128,1024),
+          bg: bgEl.value === "transparent" ? "transparent" : (bgEl.value || "transparent"),
+          format: ext,
+          logo: logoDataUrl || null
+        }
+      };
+      const list = loadHistory(); list.unshift(record);
+      if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT;
+      saveHistoryList(list);
+      renderHistory();
+    });
+  
+    // старт
+    makeQRLocal();
+    renderHistory();
+  </script>  
+</body>
+</html>
